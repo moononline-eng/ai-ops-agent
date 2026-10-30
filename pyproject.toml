@@ -1,0 +1,24 @@
+[project]
+name = "ai-ops-agent"
+version = "0.1.0"
+description = "A safe, auditable AI agent that analyzes app logs and proposes fixes via reports, GitHub issues and draft PRs."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.70",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+app = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8", "ruff>=0.5", "fastapi>=0.110", "uvicorn>=0.29"]
+
+[tool.setuptools.packages.find]
+include = ["agent*", "demo_app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120

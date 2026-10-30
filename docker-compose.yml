@@ -1,0 +1,48 @@
+# Local "production" simulation:
+#   app      -> the demo app, writes JSON logs into the shared `logs` volume
+#   traffic  -> hits the app so it produces errors
+#   agent    -> reads logs (read-only) + source (read-only), runs every 5 minutes
+#
+#   docker compose up --build
+#   docker compose exec agent sh -c 'cat /data/reports/*/report.md'
+
+services:
+  app:
+    build: { context: ., dockerfile: Dockerfile.app }
+    ports: ["8000:8000"]
+    volumes: [logs:/logs]
+    networks: [appnet]
+
+  traffic:
+    build: { context: ., dockerfile: Dockerfile.app }
+    command: ["sh", "-c", "sleep 3 && python -m demo_app.traffic --base-url http://app:8000 --rounds 1000 --delay 0.5"]
+    depends_on: [app]
+    networks: [appnet]
+
+  agent:
+    build: { context: ., dockerfile: Dockerfile.agent }
+    entrypoint: ["sh", "-c", "while true; do python -m agent run; sleep ${AGENT_INTERVAL_SECONDS:-300}; done"]
+    env_file: [.env]
+    volumes:
+      - logs:/logs:ro            # can read logs, can't tamper with them
+      - ./demo_app:/repo/demo_app:ro   # source code, read-only
+      - ./tests:/repo/tests:ro
+      - agentdata:/data          # the only writable place: state, reports, audit
+    # Hardening: immutable filesystem, no Linux capabilities, no privilege escalation.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 128
+    # Deliberately NOT on `appnet`: the agent has no network path to the app or its data.
+    networks: [egress]
+    depends_on: [app]
+
+volumes:
+  logs:
+  agentdata:
+
+networks:
+  appnet:
+  egress:
