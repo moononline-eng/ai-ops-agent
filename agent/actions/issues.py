@@ -43,10 +43,10 @@ def issue_body(f: Finding) -> str:
     return "\n".join(parts)
 
 
-def open_or_update_issue(gh, f: Finding) -> dict:
-    """Dedupe by fingerprint: one open issue per distinct problem."""
+def open_or_update_issue(gh, f: Finding) -> tuple[dict, bool]:
+    """Dedupe by fingerprint: one open issue per distinct problem. Returns (issue, created)."""
     existing = gh.find_open_issue(f.fingerprint)
     if existing:
         gh.comment(existing["number"], f"Seen again: {f.occurrences} more occurrence(s) since the last run.")
-        return existing
-    return gh.create_issue(f"[ops-agent] {f.title}", issue_body(f))
+        return existing, False
+    return gh.create_issue(f"[ops-agent] {f.title}", issue_body(f)), True

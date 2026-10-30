@@ -34,3 +34,10 @@ def test_redacts_nested_structures():
 
 def test_leaves_normal_text_alone():
     assert redact("ZeroDivisionError: division by zero") == "ZeroDivisionError: division by zero"
+
+
+def test_values_under_sensitive_keys_are_dropped():
+    entry = {"headers": {"Authorization": "Bearer abc123", "X-Api-Key": "k1"}, "password": "hunter2", "path": "/x"}
+    out = redact_obj(entry)
+    assert "abc123" not in str(out) and "k1" not in str(out) and "hunter2" not in str(out)
+    assert out["path"] == "/x"

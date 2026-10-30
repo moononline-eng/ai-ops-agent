@@ -16,7 +16,8 @@ MAX_FILE_LINES = 400
 MAX_SEARCH_HITS = 30
 MAX_LIST_ENTRIES = 200
 
-DENIED_PARTS = {".git", ".github", ".env", "node_modules", "__pycache__", ".venv", "audit"}
+# logs/ holds raw, unredacted production data; audit/ and reports/ are the agent's own output.
+DENIED_PARTS = {".git", ".github", ".env", "node_modules", "__pycache__", ".venv", "audit", "logs", "reports"}
 DENIED_SUFFIXES = {".pem", ".key", ".p12", ".sqlite", ".db"}
 TEXT_SUFFIXES = {".py", ".md", ".txt", ".toml", ".yml", ".yaml", ".json", ".cfg", ".ini", ".html", ".js", ".ts"}
 

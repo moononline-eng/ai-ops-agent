@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install ".[dev]"
@@ -48,7 +48,7 @@ jobs:
           python -m demo_app.traffic --rounds 60 --delay 0.05
 
       # Restore the checkpoint so each run only analyzes new log lines.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .agent_state.json
           key: ops-agent-state-${{ github.run_id }}
@@ -58,19 +58,25 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AGENT_MODE: ${{ inputs.mode || vars.AGENT_MODE || 'report' }}
-          AGENT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || vars.AGENT_DRY_RUN || 'true' }}
+          # format() turns the boolean into a string, so an unchecked box ('false') isn't swallowed by `||`.
+          AGENT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.dry_run) || vars.AGENT_DRY_RUN || 'true' }}
           AGENT_GITHUB_REPO: ${{ github.repository }}
           # PRs opened with the built-in GITHUB_TOKEN do NOT trigger other workflows (so CI wouldn't run).
           # Use a fine-grained PAT or GitHub App token in OPS_AGENT_GITHUB_TOKEN to get CI on agent PRs.
           AGENT_GITHUB_TOKEN: ${{ secrets.OPS_AGENT_GITHUB_TOKEN || github.token }}
           AGENT_GITHUB_BASE_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python -m agent run
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY secret is not set; skipping the agent run. Add it under Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          python -m agent run
 
       - name: Job summary
         if: always()
         run: cat reports/*/report.md >> "$GITHUB_STEP_SUMMARY" || echo "no report" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ops-agent-${{ github.run_id }}

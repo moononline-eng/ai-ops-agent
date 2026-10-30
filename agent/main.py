@@ -6,11 +6,16 @@
 """
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
+
+import anthropic
+import httpx
 
 from agent.actions.github import DryRunGitHub, GitHub, WriteBudgetExceeded
 from agent.actions.issues import open_or_update_issue
@@ -23,15 +28,30 @@ from agent.config import Settings, load_settings
 from agent.policy import RANK, decide
 
 
-def load_offset(s: Settings) -> int:
+def log_identity(log_file: Path) -> str:
+    """Hash of the file's first line: changes when the log is rotated or replaced."""
     try:
-        return json.loads(s.state_file.read_text()).get("offset", 0)
+        with log_file.open("rb") as f:
+            return hashlib.sha256(f.readline()).hexdigest()[:16]
+    except FileNotFoundError:
+        return ""
+
+
+def load_offset(s: Settings) -> int:
+    """Resume where the last run stopped, unless the log file is a different one now."""
+    try:
+        state = json.loads(s.state_file.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return 0
+    offset = state.get("offset", 0)
+    size = s.log_file.stat().st_size if s.log_file.exists() else 0
+    if state.get("log_id") != log_identity(s.log_file) or offset > size:
+        return 0  # log was rotated or replaced: start from the top
+    return offset
 
 
 def save_offset(s: Settings, offset: int) -> None:
-    s.state_file.write_text(json.dumps({"offset": offset}))
+    s.state_file.write_text(json.dumps({"offset": offset, "log_id": log_identity(s.log_file)}))
 
 
 def run(s: Settings, from_start: bool = False, client=None) -> int:
@@ -41,8 +61,6 @@ def run(s: Settings, from_start: bool = False, client=None) -> int:
     print(f"run {run_id}: mode={s.mode} dry_run={s.dry_run}")
 
     offset = 0 if from_start else load_offset(s)
-    if s.log_file.exists() and offset > s.log_file.stat().st_size:
-        offset = 0  # log was rotated
     groups, new_offset = collect(s.log_file, offset)
     print(f"found {len(groups)} problem group(s) in {s.log_file}")
     if not groups:
@@ -60,6 +78,17 @@ def run(s: Settings, from_start: bool = False, client=None) -> int:
             print(f"  stopping: {e}")
             audit.record("budget_exceeded", error=str(e))
             break
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.APIConnectionError) as e:
+            return _abort(audit, f"cannot use the Anthropic API ({type(e).__name__}): {e}")
+        except TypeError as e:
+            if "authentication" not in str(e):
+                raise
+            return _abort(audit, "no Anthropic credentials: set ANTHROPIC_API_KEY in the environment or .env")
+        except anthropic.APIStatusError as e:
+            # One bad request shouldn't sink the run: record it and move on to the next group.
+            print(f"  API error for this group, skipping: {e.status_code} {e.message}")
+            audit.record("api_error", fingerprint=group.fingerprint, status=e.status_code, error=str(e)[:500])
+            continue
         if finding:
             results.append((finding, decide(finding, s)))
 
@@ -68,14 +97,20 @@ def run(s: Settings, from_start: bool = False, client=None) -> int:
         gh = (
             DryRunGitHub(audit, s.max_github_writes_per_run)
             if s.dry_run
-            else GitHub(s.github_repo, s.github_token, audit, s.max_github_writes_per_run)
+            else GitHub(s.github_repo, s.github_token.get_secret_value(), audit, s.max_github_writes_per_run)
         )
-        try:
-            for finding, decision in results:
+        for finding, decision in results:
+            try:
                 act_on_github(gh, s, finding, decision, links)
-        except WriteBudgetExceeded as e:
-            print(f"  stopping GitHub actions: {e}")
-            audit.record("write_budget_exceeded")
+            except WriteBudgetExceeded as e:
+                print(f"  stopping GitHub actions: {e}")
+                audit.record("write_budget_exceeded")
+                break
+            except httpx.HTTPError as e:
+                # Keep going: the report still gets written and other findings still get handled.
+                print(f"  GitHub error for {finding.fingerprint}: {e}")
+                decision.reasons.append(f"GitHub action failed: {e}")
+                audit.record("github_error", fingerprint=finding.fingerprint, error=str(e)[:500])
 
     stats = {
         "error groups": len(groups),
@@ -92,12 +127,23 @@ def run(s: Settings, from_start: bool = False, client=None) -> int:
     return 0
 
 
+def _abort(audit: AuditLog, message: str) -> int:
+    # The checkpoint is not advanced, so the next run retries these log lines.
+    print(f"error: {message}", file=sys.stderr)
+    audit.record("run_aborted", error=message)
+    return 2
+
+
 def act_on_github(gh, s: Settings, finding, decision, links: dict) -> None:
     if RANK[decision.action] < RANK["issue"]:
         return
-    issue = open_or_update_issue(gh, finding)
+    issue, created = open_or_update_issue(gh, finding)
     links[finding.fingerprint] = issue.get("html_url", "")
     if decision.action != "pr":
+        return
+    if not created:
+        # A PR was already attempted when this issue was opened; don't open duplicates.
+        decision.reasons.append("issue already open; not opening another PR")
         return
     result = validate_patch(s.repo_root, finding.patch)
     try:

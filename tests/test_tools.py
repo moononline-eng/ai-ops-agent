@@ -46,3 +46,11 @@ def test_unknown_tool(repo):
 def test_tool_output_is_redacted(repo):
     (repo / "demo_app" / "cfg.py").write_text("KEY = 'sk-live-abcdefghijklmnopqrstuvwxyz'\n")
     assert "sk-live" not in RepoTools(repo).read_file("demo_app/cfg.py")
+
+
+def test_raw_logs_are_not_readable(repo):
+    (repo / "logs").mkdir()
+    (repo / "logs" / "app.md").write_text("alice@example.com\n")
+    with pytest.raises(ToolError):
+        RepoTools(repo).read_file("logs/app.md")
+    assert "logs/" not in RepoTools(repo).list_files(".")

@@ -28,12 +28,24 @@ def redact(text: str) -> str:
     return text
 
 
+_SENSITIVE_KEY = re.compile(
+    r"(?i)(authorization|cookie|password|passwd|secret|token|api[_-]?key|session|credential|private[_-]?key)"
+)
+
+
 def redact_obj(obj):
-    """Recursively redact every string inside a JSON-like structure."""
+    """Recursively redact every string inside a JSON-like structure.
+
+    Values under sensitive key names are dropped entirely: in {"Authorization": "Bearer x"}
+    the value alone matches no pattern, so the key name is the only signal.
+    """
     if isinstance(obj, str):
         return redact(obj)
     if isinstance(obj, dict):
-        return {k: redact_obj(v) for k, v in obj.items()}
+        return {
+            k: "[REDACTED_KEY_VALUE]" if isinstance(k, str) and _SENSITIVE_KEY.search(k) else redact_obj(v)
+            for k, v in obj.items()
+        }
     if isinstance(obj, list):
         return [redact_obj(v) for v in obj]
     return obj

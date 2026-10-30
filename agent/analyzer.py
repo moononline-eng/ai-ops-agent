@@ -93,7 +93,10 @@ class Analyzer:
     def __init__(self, settings: Settings, audit: AuditLog, client=None):
         self.s = settings
         self.audit = audit
-        self.client = client or anthropic.Anthropic()
+        if client is None:
+            key = settings.anthropic_api_key
+            client = anthropic.Anthropic(api_key=key.get_secret_value()) if key else anthropic.Anthropic()
+        self.client = client
         self.tools = RepoTools(settings.repo_root)
         self.tokens_used = 0
         self.output_tokens = 0

@@ -7,6 +7,7 @@ the outside world must be switched on explicitly.
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +28,9 @@ class Settings(BaseSettings):
     reports_dir: Path = Path("reports")
     audit_file: Path = Path("audit/audit.jsonl")
 
-    # Model
+    # Model. The key is read without the AGENT_ prefix, from the environment or .env.
+    # Leave it unset to fall back to the SDK's own resolution (e.g. an `ant auth login` profile).
+    anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     model: str = "claude-opus-5-5"
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
     max_tokens: int = 16000
@@ -44,7 +47,7 @@ class Settings(BaseSettings):
 
     # GitHub (only used when mode != report and dry_run is false)
     github_repo: str = ""  # "owner/name"
-    github_token: str = ""  # fine-grained token, see docs/SAFETY.md
+    github_token: SecretStr = SecretStr("")  # fine-grained token, see docs/SAFETY.md
     github_base_branch: str = "main"
 
 
