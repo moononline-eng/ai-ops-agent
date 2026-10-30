@@ -14,6 +14,7 @@ must run in a disposable container or CI runner, never on a production host.
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -40,9 +41,17 @@ def _run(cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def _make_writable(root: Path) -> None:
+    # The source may be a read-only mount; copytree preserves those modes, but the copy must be editable.
+    for path in [root, *root.rglob("*")]:
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
 def validate_patch(repo_root: Path, patch: str) -> PatchResult:
     workdir = Path(tempfile.mkdtemp(prefix="ops-agent-"))
     shutil.copytree(repo_root, workdir, ignore=COPY_IGNORE, dirs_exist_ok=True)
+    _make_writable(workdir)
     patch_file = workdir / ".agent.patch"
     patch_file.write_text(patch if patch.endswith("\n") else patch + "\n")
 

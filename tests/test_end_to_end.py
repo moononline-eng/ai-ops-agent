@@ -1,7 +1,10 @@
 """Full pipeline with a fake model and dry-run GitHub: logs in, report + actions out."""
 
 import json
+import shutil
+import stat
 
+from agent.actions.pull_requests import validate_patch
 from agent.main import run
 from tests.conftest import FakeClient, finding_json, log_line, response, text_block
 
@@ -54,3 +57,18 @@ def test_pr_mode_dry_run_validates_patch_and_logs_intent(settings, repo):
     assert events.count("github_dry_run") == 2  # issue + PR, nothing actually sent
     # The real repo was not modified, only the sandbox copy.
     assert "if orders else 0" not in (repo / "demo_app" / "main.py").read_text()
+
+
+def test_patch_validation_works_on_read_only_source(repo):
+    """Containers mount the source read-only; the sandbox copy must still be patchable."""
+    (repo / "demo_app" / "__init__.py").write_text("")
+    patch = json.loads(finding_json())["patch"]
+    for path in [repo, *repo.rglob("*")]:
+        path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+    try:
+        result = validate_patch(repo, patch)
+        assert "if orders else 0" in (result.workdir / "demo_app" / "main.py").read_text(), result.log
+        shutil.rmtree(result.workdir)
+    finally:
+        for path in [repo, *repo.rglob("*")]:
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
